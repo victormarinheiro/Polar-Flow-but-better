@@ -131,7 +131,7 @@ footer{text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono)
         <div class="sync-tag" id="syncTag">—</div>
         <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
           <span class="spinner"></span>
-          Sync
+          <span id="syncLabel">Sync</span>
         </button>
       </div>
     </div>
@@ -265,16 +265,28 @@ async function init() {
     return;
   }
 
+showDashboard([]);
+document.getElementById('subtitle').textContent = 'Syncing latest Polar data…';
+await triggerSync();
+}
+    showDashboard([]);
+  document.getElementById('subtitle').textContent = 'Syncing latest Polar data…';
+  await triggerSync();
+}
+
+async function loadCachedMetrics() {
   const data = await fetch('/api/metrics?days=30').then(r => r.json()).catch(() => null);
   if (!data || !data.nights || data.nights.length === 0) {
     showDashboard([]);
     document.getElementById('subtitle').textContent = 'No data yet — tap Sync';
     if (data?.last_sync) updateSyncTag(data.last_sync);
-    return;
+    return data;
   }
 
+  destroyCharts();
   showDashboard(data.nights);
   if (data.last_sync) updateSyncTag(data.last_sync);
+  return data;
 }
 
 function showAuthScreen() {
@@ -297,28 +309,28 @@ function updateSyncTag(ts) {
 // ── Sync ───────────────────────────────────────────────────────────────────
 async function triggerSync() {
   const btn = document.getElementById('syncBtn');
+  const label = document.getElementById('syncLabel');
   btn.disabled = true;
   btn.classList.add('syncing');
-  btn.childNodes[1].textContent = ' Syncing…';
+  label.textContent = 'Syncing…';
 
   try {
-    const result = await fetch('/api/sync', {method:'POST'}).then(r => r.json());
-    const data = await fetch('/api/metrics?days=30').then(r => r.json());
-    if (data.nights && data.nights.length) {
-      destroyCharts();
-      showDashboard(data.nights);
-      updateSyncTag(data.last_sync);
-    }
+    const syncResponse = await fetch('/api/sync?days=30', {method:'POST'});
+    const result = await syncResponse.json();
+    if (!syncResponse.ok) throw new Error(result.detail || 'Sync failed');
+
+    await loadCachedMetrics();
     if (result.errors && result.errors.length) {
       console.warn('Sync warnings:', result.errors);
     }
   } catch(e) {
     console.error('Sync failed:', e);
+    await loadCachedMetrics();
   }
 
   btn.disabled = false;
   btn.classList.remove('syncing');
-  btn.childNodes[1].textContent = ' Sync';
+  label.textContent = 'Sync';
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
