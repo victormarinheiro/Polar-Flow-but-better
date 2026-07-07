@@ -118,28 +118,41 @@ class Database:
             conn.execute("DELETE FROM settings WHERE key IN ('access_token', 'polar_user_id')")
 
     def upsert_sleep_night(self, night: dict):
-        import re
-
-        def parse_dur(s):
-            if not s:
+        from datetime import datetime
+    
+        def parse_dt(value):
+            if not value:
                 return None
-            h = m = sec = 0
-            mh = re.search(r"(\d+)H", s)
-            mm = re.search(r"(\d+)M", s)
-            ms = re.search(r"(\d+)S", s)
-            if mh: h = int(mh.group(1))
-            if mm: m = int(mm.group(1))
-            if ms: sec = int(ms.group(1))
-            return h * 3600 + m * 60 + sec
-
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    
         d = night.get("date") or night.get("night")
-        sc = night.get("score", {}) or {}
-        ev = night.get("sleepResultPolarUser", night.get("evaluation", {})) or {}
-        hg = night.get("hypnogram", ev.get("hypnogram", {})) or {}
-        phases = ev.get("phaseDurations", hg.get("phaseDurations", {})) or {}
-        ints = ev.get("interruptions", {}) or {}
-        analysis = ev.get("analysis", {}) or {}
-
+    
+        sleep_start = night.get("sleep_start_time") or night.get("sleepStart")
+        sleep_end = night.get("sleep_end_time") or night.get("sleepEnd")
+    
+        light_sleep = night.get("light_sleep") or 0
+        deep_sleep = night.get("deep_sleep") or 0
+        rem_sleep = night.get("rem_sleep") or 0
+        unrecognized = night.get("unrecognized_sleep_stage") or 0
+    
+        asleep_sec = light_sleep + deep_sleep + rem_sleep + unrecognized
+    
+        span_sec = None
+        try:
+            start_dt = parse_dt(sleep_start)
+            end_dt = parse_dt(sleep_end)
+            if start_dt and end_dt:
+                span_sec = int((end_dt - start_dt).total_seconds())
+        except Exception:
+            span_sec = None
+    
+        efficiency_pct = round(asleep_sec / span_sec * 100, 1) if asleep_sec and span_sec else None
+        rem_pct = round(rem_sleep / asleep_sec * 100, 1) if asleep_sec else None
+        deep_pct = round(deep_sleep / asleep_sec * 100, 1) if asleep_sec else None
+    
+        continuity = night.get("continuity")
+        continuity_score = round(continuity * 20, 1) if continuity is not None else None
+    
         with self._conn() as conn:
             conn.execute("""
                 INSERT INTO sleep_nights
@@ -166,20 +179,20 @@ class Database:
                     raw_json = EXCLUDED.raw_json
             """, (
                 d,
-                sc.get("sleep") or sc.get("sleepScore"),
-                sc.get("continuity") or sc.get("continuityScore"),
-                sc.get("efficiency") or sc.get("efficiencyScore"),
-                sc.get("rem") or sc.get("remScore"),
-                sc.get("n3") or sc.get("n3Score"),
-                parse_dur(ev.get("sleepSpan") or hg.get("sleepSpan")),
-                parse_dur(ev.get("asleepDuration") or hg.get("asleepDuration")),
-                analysis.get("efficiencyPercent") or ev.get("efficiencyPercent"),
-                ints.get("totalCount") or ints.get("total"),
-                ints.get("longCount") or ints.get("long"),
-                phases.get("remPercentage"),
-                phases.get("deepPercentage"),
-                hg.get("sleepStart") or ev.get("sleepStart"),
-                hg.get("sleepEnd") or ev.get("sleepEnd"),
+                night.get("sleep_score"),
+                continuity_score,
+                efficiency_pct,
+                night.get("group_regeneration_score"),
+                night.get("group_regeneration_score"),
+                span_sec,
+                asleep_sec,
+                efficiency_pct,
+                None,
+                None,
+                rem_pct,
+                deep_pct,
+                sleep_start,
+                sleep_end,
                 json.dumps(night),
             ))
 
@@ -200,12 +213,12 @@ class Database:
                     raw_json = EXCLUDED.raw_json
             """, (
                 day,
-                rec.get("meanNightlyRecoveryRmssd") or rec.get("rmssd"),
-                rec.get("meanNightlyRecoveryRri") or rec.get("rri"),
-                rec.get("recoveryIndicator"),
-                rec.get("recoveryIndicatorSubLevel"),
-                rec.get("ansStatus"),
-                rec.get("meanNightlyRecoveryRespirationInterval") or rec.get("respirationInterval"),
+                rec.get("heart_rate_variability_avg") or rec.get("meanNightlyRecoveryRmssd") or rec.get("rmssd"),
+                rec.get("beat_to_beat_avg") or rec.get("meanNightlyRecoveryRri") or rec.get("rri"),
+                rec.get("nightly_recharge_status") or rec.get("recoveryIndicator"),
+                50,
+                rec.get("ans_charge") or rec.get("ansStatus"),
+                rec.get("breathing_rate_avg") or rec.get("meanNightlyRecoveryRespirationInterval") or rec.get("respirationInterval"),
                 json.dumps(rec),
             ))
 
