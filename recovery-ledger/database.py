@@ -1,0 +1,262 @@
+"""
+SQLite database layer — raw SQL, no ORM.
+All dates stored as TEXT (ISO 8601: YYYY-MM-DD).
+"""
+import sqlite3
+import json
+from datetime import datetime
+from typing import Optional
+
+
+class Database:
+    def __init__(self, path: str = "recovery_ledger.db"):
+        self.path = path
+        self._init()
+
+    def _conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init(self):
+        with self._conn() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS sleep_nights (
+                    date                TEXT PRIMARY KEY,
+                    sleep_score         REAL,
+                    continuity_score    REAL,
+                    efficiency_score    REAL,
+                    rem_score           REAL,
+                    n3_score            REAL,
+                    sleep_span_sec      INTEGER,
+                    asleep_sec          INTEGER,
+                    efficiency_pct      REAL,
+                    interruptions_total INTEGER,
+                    interruptions_long  INTEGER,
+                    rem_pct             REAL,
+                    deep_pct            REAL,
+                    sleep_start         TEXT,
+                    sleep_end           TEXT,
+                    raw_json            TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS nightly_recovery (
+                    date                    TEXT PRIMARY KEY,
+                    rmssd                   REAL,
+                    rri                     REAL,
+                    recovery_indicator      INTEGER,
+                    recovery_sub_level      INTEGER,
+                    ans_status              REAL,
+                    resp_interval_ms        REAL,
+                    raw_json                TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS activity_days (
+                    date            TEXT PRIMARY KEY,
+                    steps           INTEGER,
+                    calories        REAL,
+                    met_minutes     REAL,
+                    active_calories REAL,
+                    raw_json        TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS hr_days (
+                    date        TEXT PRIMARY KEY,
+                    resting_hr  REAL,
+                    avg_hr      REAL,
+                    raw_json    TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS sync_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    synced_at   TEXT NOT NULL,
+                    nights_added INTEGER DEFAULT 0,
+                    status      TEXT DEFAULT 'ok',
+                    message     TEXT
+                );
+            """)
+
+    # ── Token / Auth ───────────────────────────────────────────────────────
+
+    def save_token(self, access_token: str, polar_user_id: int):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                ("access_token", access_token),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                ("polar_user_id", str(polar_user_id)),
+            )
+
+    def get_token(self) -> Optional[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM settings WHERE key IN ('access_token', 'polar_user_id')"
+            ).fetchall()
+        d = {r["key"]: r["value"] for r in rows}
+        if "access_token" not in d or "polar_user_id" not in d:
+            return None
+        return {"access_token": d["access_token"], "polar_user_id": int(d["polar_user_id"])}
+
+    def clear_token(self):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM settings WHERE key IN ('access_token', 'polar_user_id')")
+
+    # ── Sleep ──────────────────────────────────────────────────────────────
+
+    def upsert_sleep_night(self, night: dict):
+        import re
+
+        def parse_dur(s):
+            if not s:
+                return None
+            h = m = sec = 0
+            mh = re.search(r"(\d+)H", s)
+            mm = re.search(r"(\d+)M", s)
+            ms = re.search(r"(\d+)S", s)
+            if mh: h = int(mh.group(1))
+            if mm: m = int(mm.group(1))
+            if ms: sec = int(ms.group(1))
+            return h * 3600 + m * 60 + sec
+
+        d = night.get("date") or night.get("night")
+        sc = night.get("score", {}) or {}
+        ev = night.get("sleepResultPolarUser", night.get("evaluation", {})) or {}
+        hg = night.get("hypnogram", ev.get("hypnogram", {})) or {}
+        phases = ev.get("phaseDurations", hg.get("phaseDurations", {})) or {}
+        ints = ev.get("interruptions", {}) or {}
+        analysis = ev.get("analysis", {}) or {}
+
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO sleep_nights
+                (date, sleep_score, continuity_score, efficiency_score, rem_score, n3_score,
+                 sleep_span_sec, asleep_sec, efficiency_pct,
+                 interruptions_total, interruptions_long, rem_pct, deep_pct,
+                 sleep_start, sleep_end, raw_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                d,
+                sc.get("sleep") or sc.get("sleepScore"),
+                sc.get("continuity") or sc.get("continuityScore"),
+                sc.get("efficiency") or sc.get("efficiencyScore"),
+                sc.get("rem") or sc.get("remScore"),
+                sc.get("n3") or sc.get("n3Score"),
+                parse_dur(ev.get("sleepSpan") or hg.get("sleepSpan")),
+                parse_dur(ev.get("asleepDuration") or hg.get("asleepDuration")),
+                analysis.get("efficiencyPercent") or ev.get("efficiencyPercent"),
+                ints.get("totalCount") or ints.get("total"),
+                ints.get("longCount") or ints.get("long"),
+                phases.get("remPercentage"),
+                phases.get("deepPercentage"),
+                hg.get("sleepStart") or ev.get("sleepStart"),
+                hg.get("sleepEnd") or ev.get("sleepEnd"),
+                json.dumps(night),
+            ))
+
+    # ── Nightly Recovery ───────────────────────────────────────────────────
+
+    def upsert_recovery(self, day: str, rec: dict):
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO nightly_recovery
+                (date, rmssd, rri, recovery_indicator, recovery_sub_level,
+                 ans_status, resp_interval_ms, raw_json)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (
+                day,
+                rec.get("meanNightlyRecoveryRmssd") or rec.get("rmssd"),
+                rec.get("meanNightlyRecoveryRri") or rec.get("rri"),
+                rec.get("recoveryIndicator"),
+                rec.get("recoveryIndicatorSubLevel"),
+                rec.get("ansStatus"),
+                rec.get("meanNightlyRecoveryRespirationInterval") or rec.get("respirationInterval"),
+                json.dumps(rec),
+            ))
+
+    # ── Activity ───────────────────────────────────────────────────────────
+
+    def upsert_activity(self, act: dict):
+        day = act.get("date") or act.get("created")[:10]
+        summary = act.get("summary", act)
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO activity_days
+                (date, steps, calories, met_minutes, active_calories, raw_json)
+                VALUES (?,?,?,?,?,?)
+            """, (
+                day,
+                summary.get("stepCount") or summary.get("steps"),
+                summary.get("calories"),
+                summary.get("dailyMetMinutes") or summary.get("metMinutes"),
+                summary.get("activeCalories"),
+                json.dumps(act),
+            ))
+
+    # ── HR ─────────────────────────────────────────────────────────────────
+
+    def upsert_hr_day(self, day: str, resting_hr: float, avg_hr: float, raw: dict):
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO hr_days (date, resting_hr, avg_hr, raw_json)
+                VALUES (?,?,?,?)
+            """, (day, resting_hr, avg_hr, json.dumps(raw)))
+
+    # ── Sync Log ───────────────────────────────────────────────────────────
+
+    def log_sync(self, nights_added: int = 0, status: str = "ok", message: str = None):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO sync_log (synced_at, nights_added, status, message) VALUES (?,?,?,?)",
+                (datetime.utcnow().isoformat(), nights_added, status, message),
+            )
+
+    def last_sync(self) -> Optional[str]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT synced_at FROM sync_log WHERE status='ok' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return row["synced_at"] if row else None
+
+    # ── Read metrics ───────────────────────────────────────────────────────
+
+    def get_nights(self, days: int = 30) -> list:
+        with self._conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    s.date,
+                    s.sleep_score,    s.continuity_score, s.efficiency_score,
+                    s.rem_score,      s.n3_score,
+                    s.sleep_span_sec, s.asleep_sec,       s.efficiency_pct,
+                    s.interruptions_total, s.interruptions_long,
+                    s.rem_pct,        s.deep_pct,
+                    s.sleep_start,    s.sleep_end,
+                    r.rmssd,          r.rri,
+                    r.recovery_indicator, r.recovery_sub_level,
+                    r.ans_status,     r.resp_interval_ms,
+                    a.steps,          a.calories,         a.met_minutes,
+                    h.resting_hr,     h.avg_hr
+                FROM sleep_nights s
+                LEFT JOIN nightly_recovery r ON r.date = s.date
+                LEFT JOIN activity_days    a ON a.date = s.date
+                LEFT JOIN hr_days          h ON h.date = s.date
+                ORDER BY s.date DESC
+                LIMIT ?
+            """, (days,)).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+    def get_hypnogram_events(self, days: int = 30) -> list:
+        """Returns raw sleep_start + hypnogram state changes for interruption analysis."""
+        with self._conn() as conn:
+            rows = conn.execute("""
+                SELECT date, sleep_start, sleep_end, raw_json
+                FROM sleep_nights
+                ORDER BY date DESC LIMIT ?
+            """, (days,)).fetchall()
+        return [dict(r) for r in rows]

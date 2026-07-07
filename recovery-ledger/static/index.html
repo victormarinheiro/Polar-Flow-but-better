@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B0E12">
+<title>Recovery Ledger</title>
+<link rel="manifest" href="/manifest.json">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#0B0E12; --panel:#12161C; --panel-2:#171C24; --line:#232A34;
+  --ink:#E9EDF2; --dim:#8B96A5;
+  --green:#3DDC97; --amber:#F2B84B; --red:#E8604C; --blue:#5FA8FF; --violet:#A98CF0;
+  --mono:'JetBrains Mono','SF Mono',Menlo,monospace;
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  padding:calc(var(--safe-top) + 16px) 16px 80px;}
+.wrap{max-width:900px;margin:0 auto;}
+
+/* ── Header ── */
+.masthead{display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:20px;gap:12px;flex-wrap:wrap;}
+.masthead h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-0.02em;}
+.masthead .sub{color:var(--dim);font-size:11px;margin-top:3px;font-family:var(--mono);}
+.sync-btn{background:var(--green);color:#000;border:none;border-radius:20px;
+  padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--mono);
+  display:flex;align-items:center;gap:6px;transition:opacity .2s;}
+.sync-btn:disabled{opacity:.5;cursor:not-allowed;}
+.sync-btn .spinner{width:12px;height:12px;border:2px solid #000;border-top-color:transparent;
+  border-radius:50%;animation:spin .7s linear infinite;display:none;}
+.sync-btn.syncing .spinner{display:block;}
+
+/* ── Auth screen ── */
+#authScreen{display:none;flex-direction:column;align-items:center;justify-content:center;
+  min-height:60vh;gap:20px;text-align:center;}
+#authScreen h2{font-size:20px;margin:0;}
+#authScreen p{color:var(--dim);font-size:13px;margin:0;line-height:1.6;max-width:300px;}
+.connect-btn{background:var(--blue);color:#000;border:none;border-radius:24px;
+  padding:14px 32px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;
+  font-family:var(--mono);}
+
+/* ── Last sync ── */
+.sync-tag{font-family:var(--mono);font-size:11px;color:var(--dim);padding:4px 10px;
+  border:1px solid var(--line);border-radius:20px;}
+
+/* ── Hero cards ── */
+.hero{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;}
+.hcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;}
+.hcard .label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-family:var(--mono);}
+.hcard .big{font-size:36px;font-weight:700;margin:6px 0 2px;letter-spacing:-0.02em;}
+.hcard .delta{font-size:11px;color:var(--dim);font-family:var(--mono);}
+.flag{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-family:var(--mono);font-weight:600;margin-top:6px;}
+.flag.green{background:rgba(61,220,151,.12);color:var(--green);}
+.flag.amber{background:rgba(242,184,75,.12);color:var(--amber);}
+.flag.red{background:rgba(232,96,76,.12);color:var(--red);}
+
+/* ── Panels ── */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px;}
+.panel h2{font-size:13px;margin:0 0 3px;font-weight:600;}
+.panel .desc{color:var(--dim);font-size:11px;margin:0 0 14px;font-family:var(--mono);}
+.grid2{display:grid;grid-template-columns:1.3fr 1fr;gap:14px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+canvas{max-height:240px;}
+
+/* ── Benchmark bars ── */
+.benchGrid{display:flex;flex-direction:column;gap:16px;}
+.benchRow{display:grid;grid-template-columns:130px 1fr 80px;align-items:center;gap:12px;}
+.benchLabel{font-size:12px;font-weight:600;}
+.benchLabel .unit{display:block;font-size:10px;color:var(--dim);font-weight:400;font-family:var(--mono);margin-top:2px;}
+.benchTrack{position:relative;height:24px;background:var(--panel-2);border-radius:6px;border:1px solid var(--line);}
+.benchRange{position:absolute;top:0;bottom:0;background:rgba(95,168,255,.15);
+  border-left:1px solid rgba(95,168,255,.4);border-right:1px solid rgba(95,168,255,.4);}
+.benchMarker{position:absolute;top:-3px;width:3px;height:30px;border-radius:2px;transform:translateX(-50%);}
+.benchMarker::after{content:attr(data-val);position:absolute;top:-18px;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:10px;white-space:nowrap;font-weight:700;}
+.benchScale{display:flex;justify-content:space-between;font-size:9px;color:var(--dim);font-family:var(--mono);margin-top:3px;}
+.benchVerdict{font-size:10px;font-family:var(--mono);text-align:right;}
+.benchVerdict.green{color:var(--green);} .benchVerdict.amber{color:var(--amber);} .benchVerdict.red{color:var(--red);}
+
+/* ── Table ── */
+.tbl-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:11.5px;}
+th{text-align:left;color:var(--dim);font-weight:500;font-family:var(--mono);font-size:10px;
+   text-transform:uppercase;letter-spacing:.04em;padding:7px 5px;border-bottom:1px solid var(--line);}
+td{padding:7px 5px;border-bottom:1px solid rgba(35,42,52,.5);font-family:var(--mono);}
+tr:hover td{background:rgba(255,255,255,.02);}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;}
+
+/* ── Note ── */
+.note{font-size:11.5px;color:var(--dim);line-height:1.6;border-left:2px solid var(--violet);
+  padding:9px 12px;background:rgba(169,140,240,.05);border-radius:0 8px 8px 0;margin-top:12px;}
+
+/* ── Empty / loading ── */
+.empty{text-align:center;padding:60px 20px;color:var(--dim);font-size:13px;}
+
+footer{text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono);margin-top:24px;}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:600px){
+  .hero{grid-template-columns:1fr 1fr;}
+  .hero .hcard:last-child{grid-column:1/-1;}
+  .grid2,.grid3{grid-template-columns:1fr;}
+  .benchRow{grid-template-columns:110px 1fr 70px;}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Auth screen -->
+  <div id="authScreen">
+    <div style="font-size:48px">❤️</div>
+    <h2>Recovery Ledger</h2>
+    <p>Connect your Polar account to see your sleep, recovery, and strain data live.</p>
+    <a class="connect-btn" href="/auth">Connect Polar</a>
+  </div>
+
+  <!-- Dashboard (hidden until authenticated) -->
+  <div id="dashboard" style="display:none">
+    <div class="masthead">
+      <div>
+        <h1>Recovery Ledger</h1>
+        <div class="sub" id="subtitle">Polar Loop Gen 2</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="sync-tag" id="syncTag">—</div>
+        <button class="sync-btn" id="syncBtn" onclick="triggerSync()">
+          <span class="spinner"></span>
+          Sync
+        </button>
+      </div>
+    </div>
+
+    <div class="hero">
+      <div class="hcard">
+        <div class="label">Recovery</div>
+        <div class="big" id="heroRecovery" style="color:var(--green)">—</div>
+        <div class="delta" id="heroRecoveryDelta"></div>
+        <div class="flag" id="heroRecoveryFlag"></div>
+      </div>
+      <div class="hcard">
+        <div class="label">Sleep Score</div>
+        <div class="big" id="heroSleep" style="color:var(--blue)">—</div>
+        <div class="delta" id="heroSleepDelta"></div>
+        <div class="flag" id="heroSleepFlag"></div>
+      </div>
+      <div class="hcard">
+        <div class="label">Strain</div>
+        <div class="big" id="heroStrain" style="color:var(--amber)">—</div>
+        <div class="delta" id="heroStrainDelta"></div>
+        <div class="flag amber" id="heroStrainFlag"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Recovery vs. Strain</h2>
+      <div class="desc">Daily recovery (ANS, rescaled 0–100) vs. training strain proxy</div>
+      <canvas id="recoveryStrainChart"></canvas>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h2>Sleep Performance</h2>
+        <div class="desc">Score, continuity, efficiency</div>
+        <canvas id="sleepChart"></canvas>
+      </div>
+      <div class="panel">
+        <h2>HRV &amp; Resting HR</h2>
+        <div class="desc">RMSSD (ms) vs. resting HR</div>
+        <canvas id="hrvChart"></canvas>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Sleep Architecture</h2>
+      <div class="desc">Deep &amp; REM % per night, with interruption count</div>
+      <canvas id="archChart"></canvas>
+    </div>
+
+    <div class="grid3">
+      <div class="panel">
+        <h2>Continuity</h2>
+        <div class="desc">The fragmentation signal</div>
+        <canvas id="continuityChart"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Strain</h2>
+        <div class="desc">MET-minutes, log 0–21</div>
+        <canvas id="strainChart"></canvas>
+      </div>
+      <div class="panel">
+        <h2>Steps &amp; Calories</h2>
+        <div class="desc">Daily activity</div>
+        <canvas id="actChart"></canvas>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Your Averages vs. Reference Ranges</h2>
+      <div class="desc">Population benchmarks — not Polar's internal scoring</div>
+      <div id="benchGrid" class="benchGrid"></div>
+      <div class="note">Six of seven metrics in normal range. Sleep duration is the consistent outlier — fragmentation is eating into actual sleep time, not just perceived quality.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Nightly Log</h2>
+      <div class="desc">Full data table</div>
+      <div class="tbl-wrap">
+        <table id="logTable">
+          <thead>
+            <tr>
+              <th>Date</th><th>Recovery</th><th>Sleep</th><th>Continuity</th>
+              <th>RMSSD</th><th>RHR</th><th>Wakes</th><th>Strain</th><th>Steps</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <footer id="footerTxt">Recovery Ledger · Polar AccessLink · data stays on your server</footer>
+  </div><!-- /dashboard -->
+</div><!-- /wrap -->
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const C = {
+  green:'#3DDC97', amber:'#F2B84B', red:'#E8604C',
+  blue:'#5FA8FF', violet:'#A98CF0', ink:'#E9EDF2', dim:'#8B96A5', line:'#232A34'
+};
+Chart.defaults.color = C.dim;
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 10;
+Chart.defaults.borderColor = C.line;
+
+let charts = {};
+function destroyCharts() {
+  Object.values(charts).forEach(c => c.destroy());
+  charts = {};
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  // Check if we just finished OAuth
+  const params = new URLSearchParams(location.search);
+  if (params.get('syncing')) {
+    history.replaceState({}, '', '/');
+    await triggerSync();
+    return;
+  }
+
+  const status = await fetch('/auth/status').then(r => r.json()).catch(() => ({authenticated: false}));
+  if (!status.authenticated) {
+    showAuthScreen();
+    return;
+  }
+
+  const data = await fetch('/api/metrics?days=30').then(r => r.json()).catch(() => null);
+  if (!data || !data.nights || data.nights.length === 0) {
+    showDashboard([]);
+    document.getElementById('subtitle').textContent = 'No data yet — tap Sync';
+    if (data?.last_sync) updateSyncTag(data.last_sync);
+    return;
+  }
+
+  showDashboard(data.nights);
+  if (data.last_sync) updateSyncTag(data.last_sync);
+}
+
+function showAuthScreen() {
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('dashboard').style.display = 'none';
+}
+
+function showDashboard(DATA) {
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  if (DATA.length) renderAll(DATA);
+}
+
+function updateSyncTag(ts) {
+  if (!ts) return;
+  const d = new Date(ts + 'Z');
+  document.getElementById('syncTag').textContent = 'synced ' + d.toLocaleDateString('en-GB', {day:'2-digit', month:'short'});
+}
+
+// ── Sync ───────────────────────────────────────────────────────────────────
+async function triggerSync() {
+  const btn = document.getElementById('syncBtn');
+  btn.disabled = true;
+  btn.classList.add('syncing');
+  btn.childNodes[1].textContent = ' Syncing…';
+
+  try {
+    const result = await fetch('/api/sync', {method:'POST'}).then(r => r.json());
+    const data = await fetch('/api/metrics?days=30').then(r => r.json());
+    if (data.nights && data.nights.length) {
+      destroyCharts();
+      showDashboard(data.nights);
+      updateSyncTag(data.last_sync);
+    }
+    if (result.errors && result.errors.length) {
+      console.warn('Sync warnings:', result.errors);
+    }
+  } catch(e) {
+    console.error('Sync failed:', e);
+  }
+
+  btn.disabled = false;
+  btn.classList.remove('syncing');
+  btn.childNodes[1].textContent = ' Sync';
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function avg(arr) {
+  const v = arr.filter(x => x != null);
+  return v.length ? v.reduce((a,b) => a+b, 0) / v.length : null;
+}
+function pct(val, min, max) { return Math.max(0, Math.min(100, (val-min)/(max-min)*100)); }
+
+function renderAll(DATA) {
+  const labels = DATA.map(d => d.date.slice(5));
+
+  // ── Hero cards ──────────────────────────────────────────────────────────
+  const last = DATA[DATA.length - 1];
+  const recAvg   = avg(DATA.map(d => d.recovery_pct));
+  const sleepAvg = avg(DATA.map(d => d.sleep_score));
+  const strainAvg= avg(DATA.map(d => d.strain_proxy));
+
+  document.getElementById('subtitle').textContent =
+    `${DATA[0].date} – ${DATA[DATA.length-1].date} · ${DATA.length} nights`;
+
+  function setHero(idVal, idDelta, idFlag, val, avgVal, unit='', higherBetter=true) {
+    document.getElementById(idVal).textContent = val != null ? Math.round(val) + unit : '—';
+    document.getElementById(idDelta).textContent = avgVal != null ? `avg: ${Math.round(avgVal)}${unit}` : '';
+    const diff = val != null && avgVal != null ? val - avgVal : 0;
+    const cls  = (higherBetter ? diff > 5 : diff < -5) ? 'green' : (higherBetter ? diff < -5 : diff > 5) ? 'red' : 'amber';
+    const el   = document.getElementById(idFlag);
+    el.className = 'flag ' + cls;
+    el.textContent = cls === 'green' ? 'ABOVE AVG' : cls === 'red' ? 'BELOW AVG' : 'IN LINE';
+  }
+
+  setHero('heroRecovery', 'heroRecoveryDelta', 'heroRecoveryFlag', last.recovery_pct, recAvg, '%');
+  setHero('heroSleep',    'heroSleepDelta',    'heroSleepFlag',    last.sleep_score,  sleepAvg, '');
+  setHero('heroStrain',   'heroStrainDelta',   'heroStrainFlag',   last.strain_proxy, strainAvg, '', false);
+
+  // ── Recovery vs Strain ──────────────────────────────────────────────────
+  charts.rs = new Chart(document.getElementById('recoveryStrainChart'), {
+    data: { labels, datasets: [
+      {type:'bar', label:'Strain', data: DATA.map(d=>d.strain_proxy), backgroundColor:'rgba(242,184,75,.35)', borderRadius:3, yAxisID:'y1', order:2},
+      {type:'line', label:'Recovery %', data: DATA.map(d=>d.recovery_pct), borderColor:C.green, tension:.35, spanGaps:true, pointRadius:3, yAxisID:'y', order:1}
+    ]},
+    options:{responsive:true, interaction:{mode:'index',intersect:false},
+      scales:{y:{min:0,max:100,grid:{color:C.line},title:{display:true,text:'Recovery %',color:C.dim}},
+              y1:{position:'right',min:0,max:21,grid:{display:false},title:{display:true,text:'Strain',color:C.dim}}},
+      plugins:{legend:{labels:{color:C.ink}}}}
+  });
+
+  // ── Sleep components ────────────────────────────────────────────────────
+  charts.sl = new Chart(document.getElementById('sleepChart'), {
+    type:'line',
+    data:{labels, datasets:[
+      {label:'Sleep Score', data:DATA.map(d=>d.sleep_score), borderColor:C.blue, backgroundColor:'rgba(95,168,255,.1)', fill:true, tension:.35, pointRadius:2},
+      {label:'Continuity',  data:DATA.map(d=>d.continuity_score), borderColor:C.red,  borderDash:[4,3], tension:.35, pointRadius:2},
+      {label:'Efficiency',  data:DATA.map(d=>d.efficiency_score), borderColor:C.violet, borderDash:[2,2], tension:.35, pointRadius:2}
+    ]},
+    options:{responsive:true, scales:{y:{min:0,max:100,grid:{color:C.line}}}, plugins:{legend:{labels:{color:C.ink}}}}
+  });
+
+  // ── HRV / RHR ───────────────────────────────────────────────────────────
+  charts.hrv = new Chart(document.getElementById('hrvChart'), {
+    data:{labels, datasets:[
+      {type:'bar', label:'RMSSD (ms)', data:DATA.map(d=>d.rmssd), backgroundColor:'rgba(61,220,151,.35)', borderRadius:3, yAxisID:'y'},
+      {type:'line', label:'Resting HR', data:DATA.map(d=>d.resting_hr), borderColor:C.amber, tension:.35, pointRadius:3, yAxisID:'y1'}
+    ]},
+    options:{responsive:true,
+      scales:{y:{position:'left',grid:{color:C.line},title:{display:true,text:'ms',color:C.dim}},
+              y1:{position:'right',grid:{display:false},title:{display:true,text:'bpm',color:C.dim}}},
+      plugins:{legend:{labels:{color:C.ink}}}}
+  });
+
+  // ── Sleep architecture ──────────────────────────────────────────────────
+  charts.arch = new Chart(document.getElementById('archChart'), {
+    data:{labels, datasets:[
+      {type:'bar', label:'Deep %', data:DATA.map(d=>d.deep_pct), backgroundColor:C.violet, stack:'s'},
+      {type:'bar', label:'REM %',  data:DATA.map(d=>d.rem_pct),  backgroundColor:C.blue,   stack:'s'},
+      {type:'line', label:'Wakes', data:DATA.map(d=>d.interruptions_total), borderColor:C.red, yAxisID:'y1', tension:.3, pointRadius:3}
+    ]},
+    options:{responsive:true,
+      scales:{y:{stacked:true,grid:{color:C.line},title:{display:true,text:'% of sleep',color:C.dim}},
+              y1:{position:'right',grid:{display:false},title:{display:true,text:'wakes',color:C.dim}}},
+      plugins:{legend:{labels:{color:C.ink}}}}
+  });
+
+  // ── Continuity bar ──────────────────────────────────────────────────────
+  charts.cont = new Chart(document.getElementById('continuityChart'), {
+    type:'bar',
+    data:{labels, datasets:[{data:DATA.map(d=>d.continuity_score),
+      backgroundColor:DATA.map(d=>d.continuity_score<50?C.red:d.continuity_score<70?C.amber:C.green), borderRadius:3}]},
+    options:{responsive:true, plugins:{legend:{display:false}}, scales:{y:{min:0,max:100,grid:{color:C.line}}}}
+  });
+
+  // ── Strain bar ──────────────────────────────────────────────────────────
+  charts.strain = new Chart(document.getElementById('strainChart'), {
+    type:'bar',
+    data:{labels, datasets:[{data:DATA.map(d=>d.strain_proxy), backgroundColor:'rgba(242,184,75,.6)', borderRadius:3}]},
+    options:{responsive:true, plugins:{legend:{display:false}}, scales:{y:{min:0,max:21,grid:{color:C.line}}}}
+  });
+
+  // ── Steps / Calories ────────────────────────────────────────────────────
+  charts.act = new Chart(document.getElementById('actChart'), {
+    data:{labels, datasets:[
+      {type:'bar', label:'Steps', data:DATA.map(d=>d.steps), backgroundColor:'rgba(95,168,255,.45)', borderRadius:3, yAxisID:'y'},
+      {type:'line', label:'Calories', data:DATA.map(d=>d.calories), borderColor:C.green, tension:.3, pointRadius:2, yAxisID:'y1'}
+    ]},
+    options:{responsive:true,
+      scales:{y:{position:'left',grid:{color:C.line}}, y1:{position:'right',grid:{display:false}}},
+      plugins:{legend:{labels:{color:C.ink}}}}
+  });
+
+  // ── Benchmark bars ──────────────────────────────────────────────────────
+  const a_rmssd = avg(DATA.map(d=>d.rmssd));
+  const a_rhr   = avg(DATA.map(d=>d.resting_hr));
+  const a_eff   = avg(DATA.map(d=>d.efficiency_pct));
+  const a_rem   = avg(DATA.map(d=>d.rem_pct));
+  const a_deep  = avg(DATA.map(d=>d.deep_pct));
+  const a_sleep = avg(DATA.map(d=>d.asleep_sec)) / 3600;
+  const a_resp  = avg(DATA.map(d=>d.resp_interval_ms).filter(Boolean));
+  const a_resp_bpm = a_resp ? Math.round(60000 / a_resp * 10) / 10 : null;
+
+  const BENCH = [
+    {label:'HRV (RMSSD)',     unit:'ms',      value:a_rmssd,   scaleMin:10, scaleMax:90,  rangeMin:40, rangeMax:80,  note:'mid-20s range'},
+    {label:'Resting HR',      unit:'bpm',     value:a_rhr,     scaleMin:30, scaleMax:100, rangeMin:40, rangeMax:60,  note:'athletic / resting'},
+    {label:'Sleep Efficiency',unit:'%',        value:a_eff,     scaleMin:60, scaleMax:100, rangeMin:85, rangeMax:100, note:'healthy ≥85%'},
+    {label:'REM Sleep',       unit:'%',        value:a_rem,     scaleMin:5,  scaleMax:35,  rangeMin:20, rangeMax:25,  note:'healthy adult'},
+    {label:'Deep Sleep',      unit:'%',        value:a_deep,    scaleMin:0,  scaleMax:30,  rangeMin:10, rangeMax:23,  note:'healthy adult'},
+    {label:'Sleep Duration',  unit:'hrs',      value:a_sleep,   scaleMin:4,  scaleMax:10,  rangeMin:7,  rangeMax:9,   note:'CDC minimum 7h'},
+    {label:'Resp. Rate',      unit:'br/min',   value:a_resp_bpm,scaleMin:8,  scaleMax:24,  rangeMin:12, rangeMax:20,  note:'normal sleep'},
+  ];
+
+  const benchGrid = document.getElementById('benchGrid');
+  benchGrid.innerHTML = '';
+  BENCH.forEach(b => {
+    if (b.value == null) return;
+    const inRange = b.value >= b.rangeMin && b.value <= b.rangeMax;
+    let verdict, vClass;
+    if (b.label === 'Sleep Duration') {
+      if (b.value < b.rangeMin) { verdict='BELOW MIN'; vClass='red'; }
+      else { verdict='IN RANGE'; vClass='green'; }
+    } else {
+      verdict = inRange ? 'IN RANGE' : 'OUT OF RANGE';
+      vClass  = inRange ? 'green' : 'amber';
+    }
+    const markerColor = vClass==='green'?C.green:vClass==='red'?C.red:C.amber;
+    const valStr = b.unit==='hrs' ? b.value.toFixed(1)+'h' : b.unit==='%' ? Math.round(b.value)+'%' : Math.round(b.value)+'';
+    const row = document.createElement('div');
+    row.className = 'benchRow';
+    row.innerHTML = `
+      <div class="benchLabel">${b.label}<span class="unit">${b.note}</span></div>
+      <div>
+        <div class="benchTrack">
+          <div class="benchRange" style="left:${pct(b.rangeMin,b.scaleMin,b.scaleMax)}%;
+            width:${pct(b.rangeMax,b.scaleMin,b.scaleMax)-pct(b.rangeMin,b.scaleMin,b.scaleMax)}%"></div>
+          <div class="benchMarker" data-val="${valStr}"
+            style="left:${pct(b.value,b.scaleMin,b.scaleMax)}%;background:${markerColor}"></div>
+        </div>
+        <div class="benchScale"><span>${b.scaleMin}</span><span>${b.scaleMax} ${b.unit}</span></div>
+      </div>
+      <div class="benchVerdict ${vClass}">${verdict}</div>`;
+    benchGrid.appendChild(row);
+  });
+
+  // ── Nightly table ───────────────────────────────────────────────────────
+  const tbody = document.querySelector('#logTable tbody');
+  tbody.innerHTML = '';
+  DATA.forEach(d => {
+    const dotColor = !d.continuity_score ? C.dim : d.continuity_score<50?C.red:d.continuity_score<70?C.amber:C.green;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="dot" style="background:${dotColor}"></span>${d.date}</td>
+      <td>${d.recovery_pct != null ? Math.round(d.recovery_pct)+'%' : '—'}</td>
+      <td>${d.sleep_score != null ? d.sleep_score.toFixed(1) : '—'}</td>
+      <td>${d.continuity_score != null ? d.continuity_score.toFixed(1) : '—'}</td>
+      <td>${d.rmssd != null ? d.rmssd+' ms' : '—'}</td>
+      <td>${d.resting_hr != null ? d.resting_hr+' bpm' : '—'}</td>
+      <td>${d.interruptions_total != null ? d.interruptions_total : '—'}</td>
+      <td>${d.strain_proxy != null ? d.strain_proxy.toFixed(1) : '—'}</td>
+      <td>${d.steps != null ? d.steps.toLocaleString() : '—'}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('footerTxt').textContent =
+    `Recovery Ledger · Polar AccessLink · ${DATA.length} nights loaded`;
+}
+
+init();
+</script>
+</body>
+</html>
