@@ -24,7 +24,6 @@ class PolarClient:
         params = {
             "client_id": self.client_id,
             "response_type": "code",
-            "scope": "accesslink.read_all",
             "redirect_uri": self.redirect_uri,
         }
         return f"{self.AUTH_URL}?{urlencode(params)}"
