@@ -10,8 +10,8 @@ from typing import Optional
 
 class PolarClient:
     BASE_URL = "https://www.polaraccesslink.com/v3"
-    AUTH_URL = "https://auth.polar.com/oauth/authorize"
-    TOKEN_URL = "https://auth.polar.com/oauth/token"
+    AUTH_URL = "https://flow.polar.com/oauth2/authorization"
+    TOKEN_URL = "https://polarremote.com/v2/oauth2/token"
 
     def __init__(self, client_id: str, client_secret: str, redirect_uri: str):
         self.client_id = client_id
@@ -24,6 +24,7 @@ class PolarClient:
         params = {
             "client_id": self.client_id,
             "response_type": "code",
+            "scope": "accesslink.read_all",
             "redirect_uri": self.redirect_uri,
         }
         return f"{self.AUTH_URL}?{urlencode(params)}"
