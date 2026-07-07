@@ -6,14 +6,16 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: POLAR_CLIENT_ID
-        sync: false          # set manually in Render dashboard
+        sync: false
       - key: POLAR_CLIENT_SECRET
-        sync: false          # set manually in Render dashboard
+        sync: false
       - key: POLAR_REDIRECT_URI
-        sync: false          # set manually in Render dashboard
-      - key: DB_PATH
-        value: /var/data/recovery_ledger.db
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: recovery-ledger-db
+          property: connectionString
+
+databases:
+  - name: recovery-ledger-db
+    plan: free
