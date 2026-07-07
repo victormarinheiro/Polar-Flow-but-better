@@ -81,27 +81,28 @@ class PolarClient:
 
     def get_sleep_range(self, token: str, user_id: int, from_date: date, to_date: date) -> list:
         """
-        GET /v3/users/{userId}/sleep?from=YYYY-MM-DD&to=YYYY-MM-DD
-        Returns list of sleep night objects.
+        GET /v3/users/sleep
+        Returns sleep data for the last 28 days.
+        Polar's current AccessLink sleep endpoint does not use user_id or date range.
         """
-        data = self._get(
-            token,
-            f"/users/{user_id}/sleep",
-            params={"from": from_date.isoformat(), "to": to_date.isoformat()},
-        )
+        data = self._get(token, "/users/sleep")
         if data is None:
             return []
-        return data.get("nights", [])
+    
+        nights = data.get("nights", [])
+        return [
+            n for n in nights
+            if from_date.isoformat() <= n.get("date", "") <= to_date.isoformat()
+        ]
 
     # ── Nightly Recharge ───────────────────────────────────────────────────
 
     def get_nightly_recharge(self, token: str, user_id: int, day: date) -> Optional[dict]:
         """
-        GET /v3/users/{userId}/nightly-recharge/{date}
-        Returns ANS/recovery metrics for a single night.
+        GET /v3/users/nightly-recharge/{date}
         """
         try:
-            return self._get(token, f"/users/{user_id}/nightly-recharge/{day.isoformat()}")
+            return self._get(token, f"/users/nightly-recharge/{day.isoformat()}")
         except requests.HTTPError as e:
             if e.response.status_code == 404:
                 return None
@@ -149,11 +150,10 @@ class PolarClient:
 
     def get_continuous_hr(self, token: str, user_id: int, day: date) -> Optional[dict]:
         """
-        GET /v3/users/{userId}/continuous-heart-rate/{date}
-        Returns 24/7 HR samples for a day.
+        GET /v3/users/continuous-heart-rate/{date}
         """
         try:
-            return self._get(token, f"/users/{user_id}/continuous-heart-rate/{day.isoformat()}")
+            return self._get(token, f"/users/continuous-heart-rate/{day.isoformat()}")
         except requests.HTTPError as e:
             if e.response.status_code == 404:
                 return None
