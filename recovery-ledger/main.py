@@ -20,7 +20,11 @@ from sync import sync_user_data
 app = FastAPI(title="Recovery Ledger")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-db = Database(os.environ.get("DB_PATH", "recovery_ledger.db"))
+database_url = os.environ.get("DATABASE_URL")
+if not database_url:
+    raise RuntimeError("DATABASE_URL is required. Create a Postgres database and expose its connection string.")
+
+db = Database(database_url)
 
 polar = PolarClient(
     client_id=os.environ["POLAR_CLIENT_ID"],
