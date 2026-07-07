@@ -1,6 +1,6 @@
 """
-Sync engine: pulls all available data from Polar AccessLink and writes to SQLite.
-Called on-demand from the dashboard or on a schedule.
+Sync engine: pulls all available data from Polar AccessLink and writes to Postgres.
+Called when the dashboard opens or when the user taps Sync.
 """
 import statistics
 from datetime import date, timedelta
@@ -29,7 +29,7 @@ def sync_user_data(
     from_date = today - timedelta(days=days_back)
     result = {"sleep": 0, "recovery": 0, "activity": 0, "hr": 0, "errors": []}
 
-    # ── Sleep (date range query) ───────────────────────────────────────────
+    # Sleep
     try:
         nights = polar.get_sleep_range(access_token, polar_user_id, from_date, today)
         for night in nights:
@@ -38,13 +38,12 @@ def sync_user_data(
     except Exception as e:
         result["errors"].append(f"sleep: {e}")
 
-    # ── Nightly Recharge (per-day query) ──────────────────────────────────
+    # Nightly Recharge
     cursor = from_date
     while cursor <= today:
         try:
             rec = polar.get_nightly_recharge(access_token, polar_user_id, cursor)
             if rec:
-                # API returns date inside the object, but use cursor as the key
                 day_key = rec.get("date") or cursor.isoformat()
                 db.upsert_recovery(day_key, rec)
                 result["recovery"] += 1
@@ -52,7 +51,7 @@ def sync_user_data(
             result["errors"].append(f"recovery {cursor}: {e}")
         cursor += timedelta(days=1)
 
-    # ── Activity (transaction model — new data since last sync) ───────────
+    # Activity
     try:
         activities = polar.get_activity_transaction(access_token, polar_user_id)
         if activities:
@@ -62,7 +61,7 @@ def sync_user_data(
     except Exception as e:
         result["errors"].append(f"activity: {e}")
 
-    # ── Continuous HR (per-day query) ─────────────────────────────────────
+    # Continuous HR
     cursor = from_date
     while cursor <= today:
         try:
