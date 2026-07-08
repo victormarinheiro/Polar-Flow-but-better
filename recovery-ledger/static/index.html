@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0B0E12">
 <title>Recovery Ledger</title>
@@ -150,7 +151,7 @@ footer{text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono)
         <div class="flag" id="heroSleepFlag"></div>
       </div>
       <div class="hcard">
-        <div class="label">Strain</div>
+        <div class="label">Cardio Strain</div>
         <div class="big" id="heroStrain" style="color:var(--amber)">—</div>
         <div class="delta" id="heroStrainDelta"></div>
         <div class="flag amber" id="heroStrainFlag"></div>
@@ -158,8 +159,8 @@ footer{text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono)
     </div>
 
     <div class="panel">
-      <h2>Recovery vs. Strain</h2>
-      <div class="desc">Daily recovery (ANS, rescaled 0–100) vs. training strain proxy</div>
+      <h2>Recovery vs. Cardio Strain</h2>
+      <div class="desc">Recovery display score vs. Polar Cardio Load strain</div>
       <canvas id="recoveryStrainChart"></canvas>
     </div>
 
@@ -189,8 +190,8 @@ footer{text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono)
         <canvas id="continuityChart"></canvas>
       </div>
       <div class="panel">
-        <h2>Strain</h2>
-        <div class="desc">MET-minutes, log 0–21</div>
+        <h2>Cardio Strain</h2>
+        <div class="desc">Polar Cardio Load strain, when available</div>
         <canvas id="strainChart"></canvas>
       </div>
       <div class="panel">
@@ -204,7 +205,7 @@ footer{text-align:center;color:var(--dim);font-size:10px;font-family:var(--mono)
       <h2>Your Averages vs. Reference Ranges</h2>
       <div class="desc">Population benchmarks — not Polar's internal scoring</div>
       <div id="benchGrid" class="benchGrid"></div>
-      <div class="note">Six of seven metrics in normal range. Sleep duration is the consistent outlier — fragmentation is eating into actual sleep time, not just perceived quality.</div>
+      <div class="note" id="benchNote">Reference ranges are generic population benchmarks, not Polar clinical guidance.</div>
     </div>
 
     <div class="panel">
@@ -318,6 +319,7 @@ async function triggerSync() {
     await loadCachedMetrics();
     if (result.errors && result.errors.length) {
       console.warn('Sync warnings:', result.errors);
+      document.getElementById('subtitle').textContent += ` · sync warnings: ${result.errors.length}`;
     }
   } catch(e) {
     console.error('Sync failed:', e);
@@ -362,15 +364,18 @@ function renderAll(DATA) {
   setHero('heroSleep',    'heroSleepDelta',    'heroSleepFlag',    last.sleep_score,  sleepAvg, '');
   setHero('heroStrain',   'heroStrainDelta',   'heroStrainFlag',   last.strain_proxy, strainAvg, '', false);
 
-  // ── Recovery vs Strain ──────────────────────────────────────────────────
+  const strainValues = DATA.map(d=>d.strain_proxy).filter(x=>x != null);
+  const strainMax = strainValues.length ? Math.max(...strainValues) * 1.15 : 1;
+
+  // ── Recovery vs Cardio Strain ──────────────────────────────────────────────────
   charts.rs = new Chart(document.getElementById('recoveryStrainChart'), {
     data: { labels, datasets: [
-      {type:'bar', label:'Strain', data: DATA.map(d=>d.strain_proxy), backgroundColor:'rgba(242,184,75,.35)', borderRadius:3, yAxisID:'y1', order:2},
+      {type:'bar', label:'Cardio Strain', data: DATA.map(d=>d.strain_proxy), backgroundColor:'rgba(242,184,75,.35)', borderRadius:3, yAxisID:'y1', order:2},
       {type:'line', label:'Recovery %', data: DATA.map(d=>d.recovery_pct), borderColor:C.green, tension:.35, spanGaps:true, pointRadius:3, yAxisID:'y', order:1}
     ]},
     options:{responsive:true, interaction:{mode:'index',intersect:false},
       scales:{y:{min:0,max:100,grid:{color:C.line},title:{display:true,text:'Recovery %',color:C.dim}},
-              y1:{position:'right',min:0,max:21,grid:{display:false},title:{display:true,text:'Strain',color:C.dim}}},
+              y1:{position:'right',min:0,suggestedMax:strainMax,grid:{display:false},title:{display:true,text:'Cardio strain',color:C.dim}}},
       plugins:{legend:{labels:{color:C.ink}}}}
   });
 
@@ -402,11 +407,11 @@ function renderAll(DATA) {
     data:{labels, datasets:[
       {type:'bar', label:'Deep %', data:DATA.map(d=>d.deep_pct), backgroundColor:C.violet, stack:'s'},
       {type:'bar', label:'REM %',  data:DATA.map(d=>d.rem_pct),  backgroundColor:C.blue,   stack:'s'},
-      {type:'line', label:'Wakes', data:DATA.map(d=>d.interruptions_total), borderColor:C.red, yAxisID:'y1', tension:.3, pointRadius:3}
+      {type:'line', label:'Wake episodes', data:DATA.map(d=>d.wake_count ?? d.interruptions_total), borderColor:C.red, yAxisID:'y1', tension:.3, pointRadius:3}
     ]},
     options:{responsive:true,
       scales:{y:{stacked:true,grid:{color:C.line},title:{display:true,text:'% of sleep',color:C.dim}},
-              y1:{position:'right',grid:{display:false},title:{display:true,text:'wakes',color:C.dim}}},
+              y1:{position:'right',grid:{display:false},title:{display:true,text:'wake episodes',color:C.dim}}},
       plugins:{legend:{labels:{color:C.ink}}}}
   });
 
@@ -418,11 +423,11 @@ function renderAll(DATA) {
     options:{responsive:true, plugins:{legend:{display:false}}, scales:{y:{min:0,max:100,grid:{color:C.line}}}}
   });
 
-  // ── Strain bar ──────────────────────────────────────────────────────────
+  // ── Cardio Strain bar ──────────────────────────────────────────────────────────
   charts.strain = new Chart(document.getElementById('strainChart'), {
     type:'bar',
     data:{labels, datasets:[{data:DATA.map(d=>d.strain_proxy), backgroundColor:'rgba(242,184,75,.6)', borderRadius:3}]},
-    options:{responsive:true, plugins:{legend:{display:false}}, scales:{y:{min:0,max:21,grid:{color:C.line}}}}
+    options:{responsive:true, plugins:{legend:{display:false}}, scales:{y:{min:0,suggestedMax:strainMax,grid:{color:C.line}}}}
   });
 
   // ── Steps / Calories ────────────────────────────────────────────────────
@@ -443,8 +448,7 @@ function renderAll(DATA) {
   const a_rem   = avg(DATA.map(d=>d.rem_pct));
   const a_deep  = avg(DATA.map(d=>d.deep_pct));
   const a_sleep = avg(DATA.map(d=>d.asleep_sec)) / 3600;
-  const a_resp  = avg(DATA.map(d=>d.resp_interval_ms).filter(Boolean));
-  const a_resp_bpm = a_resp ? Math.round(60000 / a_resp * 10) / 10 : null;
+  const a_resp_bpm = avg(DATA.map(d=>d.resp_rate_bpm).filter(Boolean));
 
   const BENCH = [
     {label:'HRV (RMSSD)',     unit:'ms',      value:a_rmssd,   scaleMin:10, scaleMax:90,  rangeMin:40, rangeMax:80,  note:'mid-20s range'},
@@ -487,6 +491,11 @@ function renderAll(DATA) {
       <div class="benchVerdict ${vClass}">${verdict}</div>`;
     benchGrid.appendChild(row);
   });
+  const evaluated = BENCH.filter(b => b.value != null);
+  const normal = evaluated.filter(b => b.value >= b.rangeMin && b.value <= b.rangeMax).length;
+  document.getElementById('benchNote').textContent = evaluated.length
+    ? `${normal} of ${evaluated.length} benchmarked metrics are inside the generic reference range. These ranges are not Polar's internal scoring and are not medical advice.`
+    : 'No benchmarkable metrics yet.';
 
   // ── Nightly table ───────────────────────────────────────────────────────
   const tbody = document.querySelector('#logTable tbody');
@@ -501,7 +510,7 @@ function renderAll(DATA) {
       <td>${d.continuity_score != null ? d.continuity_score.toFixed(1) : '—'}</td>
       <td>${d.rmssd != null ? d.rmssd+' ms' : '—'}</td>
       <td>${d.resting_hr != null ? d.resting_hr+' bpm' : '—'}</td>
-      <td>${d.interruptions_total != null ? d.interruptions_total : '—'}</td>
+      <td>${(d.wake_count ?? d.interruptions_total) != null ? (d.wake_count ?? d.interruptions_total) : '—'}</td>
       <td>${d.strain_proxy != null ? d.strain_proxy.toFixed(1) : '—'}</td>
       <td>${d.steps != null ? d.steps.toLocaleString() : '—'}</td>`;
     tbody.appendChild(tr);

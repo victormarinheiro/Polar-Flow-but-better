@@ -1,68 +1,103 @@
 # Recovery Ledger
 
-Personal Polar health dashboard — PWA running on your iPhone, powered by Polar AccessLink API.
+Personal Polar health dashboard — PWA frontend, FastAPI backend, Render Free web service, and Render Free Postgres.
 
-## Stack
-- **Backend**: FastAPI (Python) + SQLite
-- **Frontend**: PWA (installable on iPhone via Safari → Add to Home Screen)
-- **Hosting**: Render (free tier)
-- **Data**: Polar AccessLink API v3
+## What it syncs
 
-## Deploy in 5 steps
+- Sleep Plus Stages from Polar AccessLink `/v3/users/sleep`
+- Nightly Recharge from `/v3/users/nightly-recharge`
+- Daily activity summaries from `/v3/users/activities/{date}`
+- Continuous heart-rate samples from `/v3/users/continuous-heart-rate/{date}` when the device/account exposes them
+- Cardio Load / Polar strain from `/v3/users/cardio-load/date`
+
+Raw Polar JSON is stored in Postgres beside parsed dashboard columns so parsing can be corrected later without re-authorising Polar.
+
+## Important limits
+
+- This is a single-user app.
+- It does not write anything back to Polar.
+- WHOOP strain is not recreated. The dashboard uses Polar Cardio Load strain when available.
+- Wake episodes are computed from hypnogram transitions into WAKE because Polar exposes interruption durations, not a native wake episode count.
+- Recovery percentage is a display rescale of Polar Nightly Recharge status, not a native Polar 0–100 score.
+
+## Render deployment
 
 ### 1. Push to GitHub
+
 ```bash
-git init
 git add .
-git commit -m "Initial commit"
-# Create a new repo on github.com, then:
-git remote add origin https://github.com/YOUR_USERNAME/recovery-ledger.git
-git push -u origin main
+git commit -m "Update Polar AccessLink integration"
+git push
 ```
 
-### 2. Create a Render account
-Go to render.com, sign up with GitHub.
+### 2. Create services on Render
 
-### 3. Create a new Web Service on Render
-- Click **New → Web Service**
-- Connect your GitHub repo
-- Render will detect `render.yaml` automatically
-- Select **Free** tier
+Create a Web Service from this repo with:
 
-### 4. Set environment variables in Render dashboard
-Under **Environment**, add:
+```txt
+Root Directory: recovery-ledger
+Build Command: pip install -r requirements.txt
+Start Command: uvicorn main:app --host 0.0.0.0 --port $PORT
+Instance Type: Free
 ```
-POLAR_CLIENT_ID      = 96ac5b20-fa03-4b86-8e8d-3c7482438c1a
-POLAR_CLIENT_SECRET  = a304b6e9-0750-45be-943c-38b506bb9a4a
-POLAR_REDIRECT_URI   = https://recovery-ledger.onrender.com/oauth/callback
+
+Create a Render PostgreSQL database on the Free plan and add its Internal Database URL as `DATABASE_URL` in the web service environment.
+
+### 3. Environment variables
+
+```txt
+POLAR_CLIENT_ID=your Polar client id
+POLAR_CLIENT_SECRET=your Polar client secret
+POLAR_REDIRECT_URI=https://your-render-service.onrender.com/oauth/callback
+DATABASE_URL=your Render Postgres internal database URL
+APP_USERNAME=your private username
+APP_PASSWORD=your long random password
+ENABLE_DEBUG_RAW=0
 ```
-> **Note**: Replace `recovery-ledger` with whatever Render names your service.
 
-### 5. Update the Polar redirect URL
-Once Render gives you your real URL (e.g. `https://recovery-ledger-xxxx.onrender.com`):
-- Go to **admin.polaraccesslink.com**
-- Edit your app's Authorization redirect URL to match exactly
+`APP_USERNAME` and `APP_PASSWORD` are strongly recommended. Without them, anyone who knows the Render URL can open your dashboard after you have connected Polar.
 
-### 6. Connect on iPhone
-1. Visit your Render URL in Safari
-2. Tap the Share button → **Add to Home Screen**
-3. Open the app → tap **Connect Polar**
-4. Authorize → you'll be redirected back and synced automatically
-5. From now on: open the app → tap **Sync** whenever you want fresh data
+### 4. Polar redirect URL
+
+In the Polar AccessLink admin dashboard, set the authorization redirect URL exactly to:
+
+```txt
+https://your-render-service.onrender.com/oauth/callback
+```
+
+No trailing slash.
 
 ## Local development
+
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in your credentials
-source .env
+cp .env.example .env
+# fill .env, then export it using your preferred shell method
 uvicorn main:app --reload
-# visit http://localhost:8000
-# For OAuth to work locally, temporarily set POLAR_REDIRECT_URI=http://localhost:8000/oauth/callback
-# and add that URL in admin.polaraccesslink.com
 ```
 
-## Architecture notes
-- **Polar tokens don't expire** — you only authorize once
-- **Transaction model**: Activity data uses Polar's transaction API (new-since-last-sync only). Sleep and nightly recharge use date-range queries (full historical access)
-- **Render free tier** spins down after 15 min of inactivity — first load after idle takes ~30s. This is normal
-- **SQLite persistence**: Render's free tier includes a 1GB persistent disk (configured in `render.yaml`) — your data survives redeploys
+For local OAuth, temporarily set:
+
+```txt
+POLAR_REDIRECT_URI=http://localhost:8000/oauth/callback
+```
+
+and add that exact URL in Polar AccessLink admin.
+
+## Debugging raw Polar payloads
+
+Set this only temporarily:
+
+```txt
+ENABLE_DEBUG_RAW=1
+```
+
+Then open:
+
+```txt
+/api/debug/raw
+```
+
+Turn it off afterwards. Raw health payloads are sensitive.
